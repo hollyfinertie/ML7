@@ -1,0 +1,265 @@
+---
+title: "Demonstration of Bagging, Random Forest and Boosting"
+author: "JAS"
+date: "null"
+output:
+  word_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Demonstration of Bagging, Random Forest and Boosting
+
+This demonstration of ensemble tree-based methods will utilize the 2019 County Health Rankings. The rankings provide data on a number of demographic, social and environmental health characteristics for counties in the United States. We are using these data to try to predict the counties with greater rates of firearm fatalities based on other county-level characteristics. We will be using this dataset to compare results across three different ensemble methods: bagging, random forest and boosting.
+
+***
+
+###Step 1: Load Needed Packages. We will be using the randomForest package for bagging and randomforest and the gbm package to implement gradient boosting. We will also load the caret package so we can compare our accuracy results to those obtained from a single classification tree.
+
+```{r packages}
+library(dplyr)
+library(randomForest)
+library(caret)
+library(gbm)
+library(pROC)
+library(rpart.plot)
+library(rpart)
+
+```
+
+### Step 2: Load data, perform minor cleaning and create outcome variable 
+
+```{r data_prep}
+chr<-read.csv("./chr.csv")
+
+chr<-chr[,2:68]
+
+var.names<-c("pre_death", "poorhealth", "poorphyshealth_days", "poormenthealth_days", "low_bwt", "ad_smoking", "ad_obesity", "foodenv_index", "phys_inactivity", "exer_access", "excess_drink", "alc_drivdeaths", "sti", "teen_birth", "uninsured", "primcareproviders", "dentists", "menthealthproviders", "prevhosp", "mammo_screen", "flu_vacc", "hsgrad", "somecollege", "unemployed", "child_poverty", "income_ineq", "sing_parent", "social_assoc", "violent_crime", "injury_deaths", "pm_air", "water_viol", "housing_prob", "driving_alone", "long_commute", "life_exp", "age_adj_premortality", "freq_physdistress", "freq_mentdistress", "diabetes", "hiv", "food_insecure", "ltd_access_healthyfood", "mvcrash_deaths", "insuff_sleep", "uninsured_adults", "uninsured_child", "other_pcp", "medhhinc", "freelunch_child", "res_seg_bw", "res_seg_nw", "firearm_fatalities", "homeownership", "hous_cost_burden", "population", "bw18", "gte65", "nonhisp_afam", "AmerInd_AlasNative", "Asian", "OPacIslander", "Hisp", "nonhisp_white", "nonprof_english", "female", "rural")
+
+colnames(chr)<-var.names
+
+#Will idenitify any rows that do not have complete cases (i.e. have missing data)
+miss.rows<-chr[!complete.cases(chr),]
+
+#summary(chr)
+
+#variables have very different distributions, but tree-based methods do not require scaling.
+
+#Create  an indicator of having fire-arm fatalities above the median
+
+chr$firearm.class<-as.factor(ifelse(chr$firearm_fatalities>median(chr$firearm_fatalities),1,0))
+summary(chr$firearm.class)
+#Data are slightly unbalanced.
+
+#Remove continuous version of firearm fatalities
+chr$firearm_fatalities<-NULL
+
+```
+
+### Step 3: Partition data into training and testing sets
+
+```{r}
+training.data<-chr$firearm.class%>% createDataPartition(p=0.7, list=F)
+train.data<-chr[training.data, ]
+test.data<-chr[-training.data, ]
+
+```
+
+### Step 4: Construct a single classification tree and assess accuracy for comparison purposes
+
+```{r}
+train.control<-trainControl(method="cv", number=10)
+grid.singletree<-expand.grid(cp=seq(0.0005, 0.02, by =0.001))
+tree.firearm<-train(firearm.class~., data=train.data, method="rpart",trControl=train.control, tuneGrid=grid.singletree)
+tree.firearm$bestTune
+
+tree.firearm
+varImp(tree.firearm)
+
+rpart.plot(tree.firearm$finalModel)
+accuracy.train.singletree<-tree.firearm$results[which.max(tree.firearm$results[,"Accuracy"]), "Accuracy"]
+
+print(paste('Accuracy of a single classification tree:', accuracy.train.singletree))
+
+```
+
+### Step 5: Utilize bagging to try to improve the model. 
+
+We can vary the number of trees to and compare results.
+
+```{r}
+
+bag.firearm<-randomForest(firearm.class ~., data=train.data, mtry=ncol(train.data)-1, importance=TRUE, ntree=100)
+
+bag.firearm
+
+#Create plot of Accuracy by tree index 
+plot(1-bag.firearm$err.rate[,1])
+
+bag.firearm.2<-randomForest(firearm.class ~., data=train.data, mtry=ncol(train.data)-1, importance=TRUE, ntree=200)
+
+bag.firearm.2
+
+#Create plot of Accuracy by tree index 
+plot(1-bag.firearm.2$err.rate[,1])
+
+#Examine variable importance plots
+varImpPlot(bag.firearm.2)
+
+#Obtain predicted probabilities from the model
+pred.prob<-bag.firearm.2$votes[,2]
+
+
+```
+
+### Step 6: Utilize random forest to try to improve the model. 
+
+We will vary the value of mtry (hyperparameter that controls the number of features eligible for each split) to see how this affects accuracy. We can also vary the number of trees used to grow the forest.
+
+```{r}
+set.seed(100)
+
+rf.firearm<-randomForest(firearm.class ~., data=train.data, mtry=sqrt(ncol(train.data)-1), importance=TRUE, ntree=100)
+
+rf.firearm
+
+#Create plot of Accuracy by tree index 
+plot(1-rf.firearm$err.rate[,1])
+
+rf.firearm.2<-randomForest(firearm.class ~., data=train.data, mtry=sqrt(ncol(train.data)-1), importance=TRUE, ntree=200)
+
+rf.firearm.2
+
+#Create plot of Accuracy by tree index 
+plot(1-rf.firearm.2$err.rate[,1])
+
+rf.firearm.3<-randomForest(firearm.class ~., data=train.data, mtry=sqrt(ncol(train.data)-1), importance=TRUE, ntree=300)
+
+rf.firearm.3
+
+#Create plot of Accuracy by tree index 
+plot(1-rf.firearm.3$err.rate[,1])
+
+#Vary value of mtry-First decrease from 8 to 5
+
+rf.firearm.4<-randomForest(firearm.class ~., data=train.data, mtry=5, importance=TRUE, ntree=300)
+
+rf.firearm.4
+
+#Create plot of Accuracy by tree index 
+plot(1-rf.firearm.4$err.rate[,1])
+
+#Vary value of mtry-Try increase to 20
+
+rf.firearm.5<-randomForest(firearm.class ~., data=train.data, mtry=20, importance=TRUE, ntree=300)
+
+rf.firearm.5
+
+#Create plot of Accuracy by tree index 
+plot(1-rf.firearm.5$err.rate[,1])
+
+#Vary value of mtry-Try increase to half of the features, 33
+
+rf.firearm.6<-randomForest(firearm.class ~., data=train.data, mtry=0.5*(ncol(train.data)-1), importance=TRUE, ntree=300)
+
+rf.firearm.6
+
+#Create plot of Accuracy by tree index 
+plot(1-rf.firearm.6$err.rate[,1])
+
+
+#Examine variable importance plots
+varImpPlot(rf.firearm.6)
+
+```
+
+### Step 7: Use boosting to try to improve the model. GBM package uses gradient boosting, fits to the residuals of the prior tree and slowly updates to improve prediction. 
+
+GBM requires the outcome to be numeric. For boosting, we need to specify the number of trees (B), the depth of each tree (d) and the shrinkage parameter (lambda) Similarly to other tree-based measures, there  is little danger of overfitting but if B is extremely large, this is possible. However, due to the sequential nature of tree-growth in boosting, you want to specify a large enough number. This can be examined in cross-validation. Lambda controsl the rate of learning. Vary small lambda requires a large number of trees. Typical value for lambda are 0.01 and 0.001. Depth are the number of splits in the tree. Often d=1 works well as remember, we are trying to utilize weak classifers together to create a strong one. But, this can be varied. Also, note we are using the bernoulli distribution because we are trying to classify into 1 of 2 classes. For regression, you would use a gaussian distribution. There are other options as well.
+
+gbm(formula = formula(data), distribution = "bernoulli",
+  data = list(), weights, var.monotone = NULL, n.trees = 100,
+  interaction.depth = 1, n.minobsinnode = 10, shrinkage = 0.1,
+  bag.fraction = 0.5, train.fraction = 1, cv.folds = 0,
+  keep.data = TRUE, verbose = FALSE, class.stratify.cv = NULL,
+  n.cores = NULL)
+  
+Variable importance
+After re-running our final model we likely want to understand the variables that have the largest influence on sale price. The summary method for gbm will output a data frame and a plot that shows the most influential variables. cBars allows you to adjust the number of variables to show (in order of influence). The default method for computing variable importance is with relative influence
+
+method = relative.influence: At each split in each tree, gbm computes the improvement in the split-criterion (MSE for regression). gbm then averages the improvement made by each variable across all the trees that the variable is used. The variables with the largest average decrease in MSE are considered most important.
+method = permutation.test.gbm: For each tree, the OOB sample is passed down the tree and the prediction accuracy is recorded. Then the values for each variable (one at a time) are randomly permuted and the accuracy is again computed. The decrease in accuracy as a result of this randomly "shaking up" of variable values is averaged over all the trees for each variable. The variables with the largest average decrease in accuracy are considered most important.
+  
+
+```{r}
+#Covert firearm.class to a numeric variable
+train.data$firearm.class.num<-(as.numeric(levels(train.data$firearm.class))[train.data$firearm.class])
+
+train.data$firearm.class<-NULL
+
+gbm.firearm<-gbm(firearm.class.num ~., data=train.data, distribution='bernoulli', n.trees=2000, shrinkage=0.001)
+
+summary(gbm.firearm)
+
+#plot of the marginal effect of the selected variable
+plot.gbm(gbm.firearm, 'pre_death', type="response")
+
+#Plot loss function as a result of n trees added to the ensemble
+gbm.perf(gbm.firearm, plot.it=TRUE, oobag.curve=TRUE, overlay=TRUE, method='OOB')
+
+pred.gbm.firearm<-predict(gbm.firearm, train.data, n.trees=2000, type="response")
+
+pred.gbm.class<-round(pred.gbm.firearm)
+
+misClasificError <- mean(pred.gbm.class != train.data$firearm.class.num)
+print(paste('Accuracy Model',1-misClasificError))
+
+```
+### Exercise a: Try varying the shrinkage parameter. What changes in your results?
+```{r}
+
+```
+
+###Exercise b: Try increasing the number of trees grown in the gbm model. Can you find the best iteration (i.e. where it crosses 0)? If so, obtain predictions from that model and recalculate accuracy.
+
+```{r}
+## If your shrinkage is really low, you'll need a lot of trees to find the lowest point
+
+## If your shrinkage is higher, you might overshoot the lowest point
+
+## If you go below zero on the plot, your shrinkage is too
+
+gbm.firearm<-gbm(firearm.class.num ~., data=train.data, distribution='bernoulli', n.trees=9500, shrinkage=0.001)
+
+gbm.perf(gbm.firearm, plot.it=TRUE, oobag.curve=TRUE, overlay=TRUE, method='OOB')
+
+pred.gbm.firearm<-predict(gbm.firearm, train.data, n.trees= 9500, type="response")
+
+pred.gbm.class<-round(pred.gbm.firearm)
+
+misClasificError <- mean(pred.gbm.class != train.data$firearm.class.num)
+print(paste('Accuracy Model',1-misClasificError))
+```
+### Exercise c: Generate code that will automatically iterate through different values for mtry and number of trees and generate a table comparing accuracy across the forests. What is the best model you are able to obtain with random forest?
+
+```{r}
+train_control = trainControl(method = "cv", 
+                             number = 10)
+
+grid = expand.grid(
+  mtry = seq(1, 50, by = 2),
+  n.trees = seq(0.001, 0.01, by = 0.005)
+  )
+
+randomtree = train(firearm.class.num ~., 
+                     data = train.data, 
+                     method = "randomForest",
+                     trControl = train_control, 
+                     tuneGrid = grid)
+```
+
