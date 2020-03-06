@@ -7,14 +7,15 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 library(tidyverse)
 library(forcats)
-library(e1071)
-library(rpart)
+library(randomForest)
 library(caret)
-library(rpart.plot)
+library(gbm)
 library(pROC)
-library(NHANES)
+library(rpart.plot)
+library(rpart)
 
 set.seed(100)
 ```
@@ -47,7 +48,7 @@ heart_data = read_csv("./data/processed.cleveland.data") %>%
       heart_disease_present == 0 ~ "Not Present",
       heart_disease_present != 0 ~ "Present"), 
     outcome = as.factor(outcome), 
-    outcome = fct_relevel(outcome, "Not Present",after = Inf), 
+    outcome = fct_relevel(outcome, "Not Present"),
     id = row_number(), 
     id = as.character(id)) %>% 
   select(-heart_disease_present) %>% 
@@ -86,8 +87,149 @@ varImp(heart_tree)
 ```
 
 
-### Step 3: Forest
+### Step 3: Random Forest
+
+```{r}
+# Model 1: mtry = sqrt, ntree = 100
+heart_rf1 = randomForest(
+  outcome ~., 
+  data = train_heart, 
+  mtry = sqrt(ncol(train_heart)-1), 
+  importance=TRUE, 
+  ntree=100)
+
+plot(1 - heart_rf1$err.rate[,1])
+
+varImpPlot(heart_rf1)
+
+# Model 2: mtry = sqrt, ntree = 500
+heart_rf2 = randomForest(
+  outcome ~., 
+  data = train_heart, 
+  mtry = sqrt(ncol(train_heart)-1), 
+  importance=TRUE, 
+  ntree=500)
+
+plot(1 - heart_rf2$err.rate[,1])
+
+varImpPlot(heart_rf2)
+
+# Model 3: mtry = sqrt, ntree = 200
+heart_rf3 = randomForest(
+  outcome ~., 
+  data = train_heart, 
+  mtry = sqrt(ncol(train_heart) - 1), 
+  importance = TRUE, 
+  ntree = 200)
+
+plot(1 - heart_rf3$err.rate[,1])
+
+varImpPlot(heart_rf3)
+
+# Model 4: mtry = 8, ntree = 200
+heart_rf4 = randomForest(
+  outcome ~., 
+  data = train_heart, 
+  mtry = 8, 
+  importance=TRUE, 
+  ntree=200)
+
+plot(1 - heart_rf4$err.rate[,1])
+
+varImpPlot(heart_rf4)
+
+# Model 5: mtry = 5, ntree = 200
+heart_rf5 = randomForest(
+  outcome ~., 
+  data = train_heart, 
+  mtry = 5, 
+  importance=TRUE, 
+  ntree=200)
+
+plot(1 - heart_rf5$err.rate[,1])
+
+varImpPlot(heart_rf5)
+
+# Model 6: mtry = 3, ntree = 200
+heart_rf6 = randomForest(
+  outcome ~., 
+  data = train_heart, 
+  mtry = 4, 
+  importance=TRUE, 
+  ntree=200)
+
+plot(1 - heart_rf6$err.rate[,1])
+
+varImpPlot(heart_rf6)
+```
+
+**Best Model: 5** Based on error rate and plot. 
+
+```{r}
+heart_rf5
+```
+
+
+### Step 4: 
+Answer the questions: 
+
+Are there differences in variable importance that you see between a single tree and an ensemble metric?  
+
+* Yes. The ordering of variable importance was pretty different between single tree and ensemble metric. While the single tree listed the top 3 as (1) pain_type, (2) vessels_colorful, and (3) max_hr, the top 3 for ensemble methods varied. Many identified defect as one of the top variables. We must consider that the single tree considers all variables while the random forest does not. 
+
+Are there differences observed across the different variable importance metrics output from the ensemble? How do you interpret those differences?
+
+ * Yes. The ordering between ensemble methods is also different because we are using different hyperparameters: mtry (numbers of variables per model) and number of trees per forest. Random Forests do not use all the variables in each tree (choose m out of p), so the variable importance will always vary between forests. 
+ 
+ 
+### Step 5: Boosting and Random Forests
+ 
+```{r}
+#Covert outcome to numeric
+train_heart_numeric = train_heart %>% 
+  mutate(
+    outcome = relevel(outcome,"Not Present"),
+    outcome = (as.numeric(outcome) - 1))
+
+gbm_heart = gbm(outcome ~ ., 
+                data = train_heart_numeric, 
+                distribution = 'bernoulli', 
+                n.trees = 3000,
+                shrinkage = 0.001)
+
+summary(gbm_heart)
+
+gbm.perf(gbm_heart, 
+         plot.it = TRUE, 
+         oobag.curve = TRUE, 
+         overlay = TRUE, 
+         method = 'OOB')
+
+pred_gbm = predict(gbm_heart, 
+                   train_heart_numeric, 
+                   n.trees=3000, 
+                   type="response")
+
+pred_gbm_class = round(pred_gbm)
+
+misclass = mean(pred_gbm_class != train_heart_numeric$outcome)
+
+print(paste('Accuracy Model',1-misclass))
+```
+ 
+The boosting method produced a list of important variables that was similar to many of the random forest models. For example, most models identified pain_type, defect, and vessels_colorful as the most important variables. However, it was pretty different than the single tree ordering. The single tree placed max_hr as a top 3 significant variable but this did not show up in the top 3 using random forest or boosting. 
+
+### Step 6. Best Model
+
+The best classifier was the boosting algorithm with a classification accuracy of `r paste(1-misclass)`. The single tree gave as an accuracy rate around 77% and the random forest was around 79%. 
+
+This is not surprising considering that the single tree method uses "greedy" algorithms and the random forest required a lot of hyperparameter assignments. The boosting method improved both by building more accurate models off of errors from previous models. 
+
+### Step 7. SVC from HW 6
+
+The accuracy acheived using SVC was 84.13%. The accuracy acheived using boosting was `r paste(1-misclass)`. The accuracies of each method were extremely similar. 
 
 
 
-
+ 
+ 

@@ -74,14 +74,17 @@ test.data<-chr[-training.data, ]
 
 ```{r}
 train.control<-trainControl(method="cv", number=10)
+
 grid.singletree<-expand.grid(cp=seq(0.0005, 0.02, by =0.001))
 tree.firearm<-train(firearm.class~., data=train.data, method="rpart",trControl=train.control, tuneGrid=grid.singletree)
+
 tree.firearm$bestTune
 
 tree.firearm
 varImp(tree.firearm)
 
 rpart.plot(tree.firearm$finalModel)
+
 accuracy.train.singletree<-tree.firearm$results[which.max(tree.firearm$results[,"Accuracy"]), "Accuracy"]
 
 print(paste('Accuracy of a single classification tree:', accuracy.train.singletree))
