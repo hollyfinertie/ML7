@@ -1,0 +1,93 @@
+---
+title: "HW7"
+author: "Holly Finertie"
+date: "3/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(forcats)
+library(e1071)
+library(rpart)
+library(caret)
+library(rpart.plot)
+library(pROC)
+library(NHANES)
+
+set.seed(100)
+```
+
+
+### Step 1: Import Data (Tidyverse)
+
+```{r}
+heart_data = read_csv("./data/processed.cleveland.data") %>% 
+    rename(age = "63.0", 
+           sex = "1.0", 
+           pain_type = "1.0_1",
+           resting_sysbp = "145.0", 
+           chol = "233.0",
+           fast_blsugar_gt12 = "1.0_2", 
+           rest_ecg = "2.0", 
+           max_hr = "150.0", 
+           exerc_angina = "0.0", 
+           ST_depression = "2.3", 
+           ST_slope = "3.0", 
+           vessels_colorful = "0.0_1",
+           defect = "6.0", 
+           heart_disease_present = "0") %>% 
+  mutate(
+    vessels_colorful = as.numeric(replace(
+      vessels_colorful, vessels_colorful == "?", NA)), 
+    defect = as.numeric(replace(
+      defect, defect == "?", NA)),
+    outcome = case_when(
+      heart_disease_present == 0 ~ "Not Present",
+      heart_disease_present != 0 ~ "Present"), 
+    outcome = as.factor(outcome), 
+    outcome = fct_relevel(outcome, "Not Present",after = Inf), 
+    id = row_number(), 
+    id = as.character(id)) %>% 
+  select(-heart_disease_present) %>% 
+  drop_na()
+
+train_heart = heart_data %>% sample_frac(.7)
+test_heart = anti_join(heart_data, train_heart, by = 'id') %>% 
+  select(-id)
+
+train_heart = train_heart %>% 
+  select(-id)
+```
+
+
+### Step 2: Single CART
+
+```{r}
+train_control = trainControl(method = "cv", 
+                             number = 10)
+
+grid = expand.grid(cp = seq(0.0005, 0.02, by = 0.001))
+
+heart_tree = train(outcome ~ ., 
+                     data = train_heart, 
+                     method = "rpart",
+                     trControl = train_control, 
+                     tuneGrid = grid)
+
+rpart.plot(heart_tree$finalModel)
+
+accuracy_tree = heart_tree$results[which.max(heart_tree$results[,"Accuracy"]), "Accuracy"]
+
+print(paste('Accuracy of CART:', accuracy_tree))
+
+varImp(heart_tree) 
+```
+
+
+### Step 3: Forest
+
+
+
+
